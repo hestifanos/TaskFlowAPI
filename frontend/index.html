@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TaskFlow</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2333; --accent:#2f6fed; --muted:#7a8194; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--card); padding:14px 24px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e4e7ee; }
+  main { max-width:760px; margin:24px auto; padding:0 16px; }
+  .card { background:var(--card); border:1px solid #e4e7ee; border-radius:10px; padding:18px; margin-bottom:14px; }
+  input, select, textarea, button { font:inherit; padding:9px 12px; border-radius:8px; border:1px solid #ccd2de; }
+  button { background:var(--accent); color:#fff; border:none; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--muted); }
+  .task { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid #eef0f5; }
+  .task:last-child { border-bottom:none; }
+  .title { flex:1; }
+  .done .title { text-decoration:line-through; color:var(--muted); }
+  .pill { font-size:12px; padding:2px 8px; border-radius:99px; background:#eef2fd; color:var(--accent); }
+  form.row { display:flex; gap:8px; flex-wrap:wrap; }
+  #error { color:#c23030; min-height:1.2em; font-size:14px; }
+</style>
+</head>
+<body>
+<header><strong>TaskFlow</strong><button id="logout" class="ghost" hidden>Log out</button></header>
+<main>
+  <section id="auth" class="card">
+    <h2>Sign in</h2>
+    <form class="row" id="authForm">
+      <input id="email" type="email" placeholder="email" required>
+      <input id="password" type="password" placeholder="password (8+ chars)" required minlength="8">
+      <button type="submit">Log in</button>
+      <button type="button" id="registerBtn" class="ghost">Register</button>
+    </form>
+    <p id="error"></p>
+  </section>
+
+  <section id="appView" hidden>
+    <div class="card">
+      <form class="row" id="newTask">
+        <input id="newTitle" placeholder="What needs doing?" required style="flex:1">
+        <select id="newPriority"><option value="1">Low</option><option value="2" selected>Medium</option><option value="3">High</option></select>
+        <button type="submit">Add</button>
+      </form>
+    </div>
+    <div class="card"><div id="taskList"></div></div>
+  </section>
+</main>
+<script>
+const api = (path, opts = {}) => fetch('/api' + path, {
+  ...opts,
+  headers: { 'Content-Type': 'application/json',
+             ...(localStorage.token ? { Authorization: 'Bearer ' + localStorage.token } : {}) }
+}).then(async r => { if (!r.ok) throw new Error((await r.json()).detail || r.status); return r.status === 204 ? null : r.json(); });
+
+const $ = s => document.querySelector(s);
+const show = loggedIn => { $('#auth').hidden = loggedIn; $('#appView').hidden = !loggedIn; $('#logout').hidden = !loggedIn; };
+
+async function authenticate(path) {
+  $('#error').textContent = '';
+  try {
+    const res = await api(path, { method: 'POST', body: JSON.stringify({ email: $('#email').value, password: $('#password').value }) });
+    localStorage.token = res.token;
+    show(true); loadTasks();
+  } catch (e) { $('#error').textContent = e.message; }
+}
+
+$('#authForm').addEventListener('submit', e => { e.preventDefault(); authenticate('/auth/login'); });
+$('#registerBtn').addEventListener('click', () => authenticate('/auth/register'));
+$('#logout').addEventListener('click', () => { localStorage.removeItem('token'); show(false); });
+
+async function loadTasks() {
+  const tasks = await api('/tasks');
+  const list = $('#taskList');
+  list.innerHTML = tasks.length ? '' : '<p>No tasks yet.</p>';
+  for (const t of tasks) {
+    const row = document.createElement('div');
+    row.className = 'task' + (t.status === 'done' ? ' done' : '');
+    row.innerHTML = `<input type="checkbox" ${t.status === 'done' ? 'checked' : ''}>
+      <span class="title">${t.title.replace(/</g,'&lt;')}</span>
+      <span class="pill">${['','Low','Medium','High'][t.priority]}</span>
+      <button class="ghost">Delete</button>`;
+    row.querySelector('input').onchange = async e => {
+      await api('/tasks/' + t.id, { method: 'PUT', body: JSON.stringify({ ...t, status: e.target.checked ? 'done' : 'todo' }) });
+      loadTasks();
+    };
+    row.querySelector('button').onclick = async () => { await api('/tasks/' + t.id, { method: 'DELETE' }); loadTasks(); };
+    list.appendChild(row);
+  }
+}
+
+$('#newTask').addEventListener('submit', async e => {
+  e.preventDefault();
+  await api('/tasks', { method: 'POST', body: JSON.stringify({ title: $('#newTitle').value, priority: +$('#newPriority').value }) });
+  $('#newTitle').value = '';
+  loadTasks();
+});
+
+if (localStorage.token) { show(true); loadTasks().catch(() => show(false)); }
+</script>
+</body>
+</html>
